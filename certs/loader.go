@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"path"
 	"strings"
 	"time"
@@ -41,6 +42,9 @@ func (l *Loader) Issue(domain string) (*tls.Certificate, error) {
 		cert, err := l.load(domain)
 		if err == nil {
 			l.cache.Add(domain, cert)
+			log.Printf("loaded certificate for %v (expires %v)", domain, cert.Leaf.NotAfter)
+		} else {
+			log.Printf("could not issue certificate for %v: %v", domain, err)
 		}
 		return cert, err
 	})
