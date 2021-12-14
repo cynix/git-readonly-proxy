@@ -3,10 +3,8 @@ package certs
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"log"
 	"path"
-	"strings"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -56,39 +54,18 @@ func (l *Loader) Issue(domain string) (*tls.Certificate, error) {
 }
 
 func (l *Loader) load(domain string) (*tls.Certificate, error) {
-	cp := path.Join(l.Dir, domain, "cert.pem")
-	cd, err := load(cp)
+	cf := path.Join(l.Dir, domain, "cert.pem")
+	kf := path.Join(l.Dir, domain, "key.pem")
+
+	cert, err := tls.LoadX509KeyPair(cf, kf)
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := x509.ParseCertificate(cd.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load certificate from '%v': %v", cp, err)
-	}
-
-	kp := path.Join(l.Dir, domain, "key.pem")
-	kd, err := load(kp)
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		return nil, err
 	}
 
-	k, err := x509.ParsePKCS8PrivateKey(kd.Bytes)
-	if err != nil {
-		if strings.Contains(err.Error(), "use ParseECPrivateKey instead") {
-			k, err = x509.ParseECPrivateKey(kd.Bytes)
-		} else if strings.Contains(err.Error(), "use ParsePKCS1PrivateKey instead") {
-			k, err = x509.ParsePKCS1PrivateKey(kd.Bytes)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to load private key from '%v': %v", kp, err)
-		}
-	}
-
-	return &tls.Certificate{
-		Certificate: [][]byte{cd.Bytes},
-		PrivateKey: k,
-		Leaf: c,
-	}, nil
+	return &cert, nil
 }

@@ -4,14 +4,11 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"fmt"
 	"log"
 	"math/big"
-	"strings"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -19,9 +16,7 @@ import (
 
 // `CA` issues certificates using a CA certificate.
 type CA struct {
-	Certificate *x509.Certificate
-	PublicKey interface{}
-	PrivateKey interface{}
+	tls.Certificate
 
 	cache *Cache
 	group *singleflight.Group
@@ -29,48 +24,18 @@ type CA struct {
 
 // `NewCA` creates an `Issuer` by loading the given CA certificate and private key files.
 func NewCA(crt, key string) (Issuer, error) {
-	cd, err := load(crt)
+	cert, err := tls.LoadX509KeyPair(crt, key)
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := x509.ParseCertificate(cd.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load CA certificate from '%v': %v", crt, err)
-	}
-
-	kd, err := load(key)
+	cert.Leaf, err = x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		return nil, err
-	}
-
-	k, err := x509.ParsePKCS8PrivateKey(kd.Bytes)
-	if err != nil {
-		if strings.Contains(err.Error(), "use ParseECPrivateKey instead") {
-			k, err = x509.ParseECPrivateKey(kd.Bytes)
-		} else if strings.Contains(err.Error(), "use ParsePKCS1PrivateKey instead") {
-			k, err = x509.ParsePKCS1PrivateKey(kd.Bytes)
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("failed to load CA private key from '%v': %v", key, err)
-		}
-	}
-
-	var pub interface{}
-	switch priv := k.(type) {
-	case *ecdsa.PrivateKey:
-		pub = priv.PublicKey
-	case *rsa.PrivateKey:
-		pub = priv.PublicKey
-	default:
-		return nil, fmt.Errorf("unsupported CA private key type in '%v'", key)
 	}
 
 	return &CA {
-		Certificate: c,
-		PublicKey: pub,
-		PrivateKey: k,
+		Certificate: cert,
 		cache: NewCache(128),
 		group: new(singleflight.Group),
 	}, nil
@@ -103,7 +68,7 @@ func (ca *CA) Issue(domain string) (*tls.Certificate, error) {
 }
 
 func (ca *CA) issue(domain string) (*tls.Certificate, error) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +87,7 @@ func (ca *CA) issue(domain string) (*tls.Certificate, error) {
 		DNSNames: []string{domain},
 	}
 
-	b, err := x509.CreateCertificate(rand.Reader, template, ca.Certificate, &priv.PublicKey, ca.PrivateKey)
+	b, err := x509.CreateCertificate(rand.Reader, template, ca.Certificate.Leaf, &key.PublicKey, ca.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -133,8 +98,8 @@ func (ca *CA) issue(domain string) (*tls.Certificate, error) {
 	}
 
 	return &tls.Certificate{
-		Certificate: [][]byte{b},
-		PrivateKey: priv,
+		Certificate: append([][]byte{b}, ca.Certificate.Certificate[0:len(ca.Certificate.Certificate)-1]...),
+		PrivateKey: key,
 		Leaf: cert,
 	}, nil
 }
